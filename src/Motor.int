@@ -1,0 +1,416 @@
+/***
+ -------------------------------------------------------------------------------
+ |                                                                             |
+ | NASA Glenn Research Center                                                  |
+ | 21000 Brookpark Rd                                                          |
+ | Cleveland, OH 44135                                                         |
+ |                                                                             |
+ | File Name:     Motor.int                                                    |
+ | Author(s):     Jonathan Fuzaro Alencar, George Thomas, Jeffrey Csank,       |
+ |                David Sadey, Tom Lavelle                                     |
+ | Date(s):       May 2018                                                     |
+ |                                                                             |
+ -------------------------------------------------------------------------------
+***/
+
+#ifndef __MOTOR__
+#define __MOTOR__
+
+#include "PSL_math.fnc"
+
+class Motor extends ElectricElement {
+  
+  //----------------------------
+  // ****** DOCUMENTATION ******
+  //----------------------------
+  
+  // title = "";
+
+  description = "The " + isA() + " represents the performance of a generic motor. " +
+  "The motor is intended to run with an efficiency map subelement, plugged into its S_map " +
+  "socket.";
+
+  usageNotes = isA() +
+  "
+
+- The input design parameters that must be specified by the modeler when creating an instance 
+of this " + isA() + " component are mass specific power (SpecificPower) and design efficiency 
+(effDes). This component will produce mechanical power at its shaft port equal to the input
+electrical power at the specified voltage and frequency times its operating efficiency.
+
+- When running ONDESIGN, this component will determine its design speed and design torque by 
+saving off the values at the shaft port. The operating efficiency will be effDes. When 
+running OFFDESIGN, the model will call its S_map subelement (if it exists), to look up the 
+efficiency at the current operating point. It will then run with that efficiency.
+
+- This component transforms power, from electrical power at its input port, to useful output 
+(load) power. Because this component represents a transformation of power, it includes a node. 
+Being a component including a node, its voltage is an indepedent variable. Note, there is no
+dependent to match with this independent within this component. Depending on the application, 
+users may want to add a dependent on their own, that ensures that the output shaft power is 
+equal to a demand value. Or there may be a dependent on a gas turbine component connected to
+the output shaft (a thrust, a shaft speed, or something else) that will balance the solver
+variables.
+
+- Note that, as a component that contains a node and has its voltage known at the beginning
+of the solverSequence, it uses its prePass() method to call the electrical port update 
+function to pass this voltage information to electrical components that it is connected to. 
+Note that in the current implementation of the NPSS Power System Library, these components 
+containing nodes do not know what currents are going through their ports at the beginning of 
+an iteration. Because of this, they must be connected to power transmission components (cables 
+and breakers), and these transmission components must be run before node-bearing 
+transformation components like this one, as the transmission components will calculate and 
+populate these current values. Note that this design is intended to be analogous to a common 
+approach taken in fluid networks within NPSS rocket models.
+
+- The motor block contains variables intended to be used in a multi-design-point (MDP) 
+simulation. This MDP logic is intended to consist of several different assemblies containing 
+systems including this motor block; each one of these assemblies represents the same system 
+but running at a different design point (e.g. cruise, climb, and takeoff for a fixed wing 
+concept). To enable the solver variables that this component uses for MDP, set Option multiDes 
+to true. Then select a mission segment that represents the most important segment of the 
+mission to the design and give it initial guess values for design speed and torque. You will 
+also need to disable autoSetup in ind_NDes and dep_NDesSet or otherwise remove them from all 
+assemblies other than the main MDP one. Finally, then set up logic that copies design speed 
+and torque from the main assembly to the other MDP assemblies before each of them run, and 
+set up a solver pair at the top level that varies one or more of the design values in the main
+design assembly until conditions for that variable are met in another MDP assembly where that 
+variable must meet a constraint. This logic is intended to allow for cases where a motor must 
+be designed to support a maximum speed at one flight condition, but maximum torque at another. 
+For an example on setting up this MDP logic, see baseline_turboelectricMDP.run.
+
+- This component, like other power system components in the NPSS Power System Library, can 
+optionally include thermal models. An optional thermal model is enabled by setting 
+switchThermPort to TRUE, and plugging an EThermalMass subelement into the S_eThermMass socket. 
+Doing these will add a temperature state (existing within EThermalMass) and a thermal port to 
+the model. The thermal port is intended to connect this component to a second component that 
+represents the mechanism by which heat is extracted from this component. This second component 
+could represent a heat exchanger, cold plate, or just model heat transfer from the first 
+component to the surrounding environment. For more information, see EThermalMass.
+
+- The " + isA() + " component includes sizing logic in the form of its performance map. 
+this logic calculates mass as well as calculates the design torque and speed values. These 
+values are used by a performance map (if one is plugged into the S_map socket) to calculate 
+efficiency at the current operating point. For more information about performance maps for 
+this component, see MotorGeneratorMap.int";
+  
+  //------------------------------
+  // ****** SETUP VARIABLES ******
+  //------------------------------
+  
+  real Current {
+    value = 1.; IOstatus = "input"; units = "A"; // [amperes]
+    description = "Current.";
+  }
+  
+  eff {
+    value = 1.; IOstatus = "output"; units = "none";
+    description = "Electrical-to-mechanical power conversion efficiency.  Equal to effDes during design, and effBase during off design.";
+  }
+
+  real effBase {
+    value = 1.;  IOstatus = "output";  units = "none";
+    description = "Electrical-to-mechanical power conversion efficiency.  Calculated and set by S_map socket during off design.";
+  }
+
+  real effDes {
+    value = 1.;  IOstatus = "input";  units = "none";
+    description = "Electrical-to-mechanical power conversion efficiency at design point.";
+  } 
+
+  real frequency {
+    value = 0; IOstatus = "input"; units = "Hz"; // [hertz]
+    description = "Generator Frequency.";
+  }
+  
+  Loss_r {
+    value = 0; units = "kW"; // [kilowatts]
+    description = "Motor loss.";
+  }
+
+  Loss_j {
+    value = 0; units = "kW"; // [kilowatts]
+    description = "Motor loss.";
+  }
+
+  Q_heat {
+    value = 0; IOstatus = "output";  units = "Btu/sec"; // [BTUs / sec]
+    description = "Power dissipation in BTU/s at current time.";
+  }
+
+  Mass {
+    value = 1.; IOstatus = "output"; units = "kg"; // [kilograms]
+    description = "Mass output of the motor.";
+  }
+
+  real motorResistance {
+    value = 1.; IOstatus = "output"; units = "kW"; // [kilowatts]
+    description = "Resistance of the motor based on losses.";
+  } 
+
+  real Ndes {
+    value = 1.;  IOstatus = "output";  units = "rpm"; // [rev / min]
+    description = "Rotational speed at design.";
+  }
+
+  real NdesSet {
+    value = 1.;  IOstatus = "output";  units = "rpm"; // [rev / min]
+    description = "Rotational speed at design condition, temp variable.";
+  }
+
+  real Pout {
+    value = 1.;  IOstatus = "output";  units = "kW"; // [kilowatts]
+    description = "Power out of the motor.";
+  }
+
+  real Pin {
+    value = 1.;  IOstatus = "output";  units = "kW"; // [kilowatts]
+    description = "Power in to the motor.";
+  }
+
+  real powerfactor {
+    value = 1;
+    description = "Motor power factor.";
+  }
+  
+  real SpecificPower {
+    value = 13; IOstatus = "input"; units = "kW/kg";
+    description = "Power to weight ratio for the motor.";
+  }
+  
+  real Speed {
+    value = 1.; IOstatus = "input";
+    description = "Propulsor speed.";
+  }
+
+  real trq {
+    value = 1.; IOstatus = "output"; units = "ft*lbf";
+    description = "Propulsor torque.";
+  }
+
+  real trqDes {
+    value = 1.; IOstatus = "output"; units = "ft*lbf";
+    description = "Torque at design.";
+  }
+
+  real trqTemp {
+    value = 1.; IOstatus = "output"; units = "ft*lbf";
+    description = "Temporary torque which the solver drives to match actual torque.";
+  }
+
+  real trqDesSet {
+    value = 1.; IOstatus = "output"; units = "ft*lbf";
+    description = "Torque at design condition, temp variable.";
+  }
+
+  real Vreal {
+    value = 1000.;  IOstatus = "output";  units = "V"; // [volts]
+    description = "Real portion of voltage.";
+  }
+
+  real Vimag {
+    value =0;  IOstatus = "output";  units = "V"; // [volts]
+    description = "Imaginary portion of voltage.";
+  }
+  
+  //------------------------------------
+  // ****** OPTION VARIABLE SETUP ******
+  //------------------------------------
+
+  Option switchDes {
+    allowedValues = { "DESIGN", "OFFDESIGN" }
+    description = "Determines if the element is in design or off-design mode.";
+    rewritableValues = FALSE;
+  }
+
+  Option switchThermPort {
+    allowedValues = { "TRUE", "FALSE" }
+    description = "Determines if component needs thermal port.";
+    rewritableValues = FALSE;  // enables converter optimization
+    trigger = TRUE;
+  }
+
+  Option multiDes {
+    allowedValues = { "FALSE", "TRUE" }
+    description = "Determines if component is undergoing multi-design point simulation.";
+    rewritableValues = FALSE;
+    trigger = TRUE;
+  }
+  
+  //----------------------------------------------------------
+  // ****** SETUP PORTS, FLOW STATIONS, SOCKETS, TABLES ******
+  //----------------------------------------------------------  
+  
+  /* MECHANICAL PORTS */
+
+  ShaftOutputPort Sh_O {
+    description = "Mechanical connection to the shaft.";
+  }
+  
+  /* ELECTRICAL PORTS */
+
+  ElectricInputPort EP_I {
+    description = "Electric input port.";
+    ElectricPowerType.allowedValues = { "AC3" };
+    setOption("ElectricPowerType", "AC3"); // only AC3 output allowed
+  }
+
+  /* SOCKETS */
+
+  Socket S_map {
+    allowedValues = { "effBase" }
+    description = "Socket to calculate motor map performance.";
+    socketType = "MotorGeneratorMap";
+  }
+
+  Socket S_eThermMass {
+    allowedValues = { "Q_heat", "Mass" }
+    description = "Thermal mass socket.";
+    socketType = "EThermalMass";
+  }
+
+  //-----------------------------------------------------
+  // ******  ADD SOLVER INDEPENDENTS & DEPENDENTS  ******
+  //-----------------------------------------------------
+
+  Independent ind_Vreal { 
+    varName = "Vreal"; 
+    indepRef = "1000";
+    description = "Varies the real component of the motor voltage.";
+    autoSetup = TRUE;
+  }
+  
+  Independent ind_Vimag { 
+    varName = "Vimag"; 
+    indepRef = "1000";
+    description = "Varies the imaginary component of the motor voltage.";
+    autoSetup = TRUE;
+  }
+
+  Dependent dep_power_factor {
+    eq_lhs = "EP_I.S.j";
+    eq_rhs = "EP_I.S.r * tan(acos(powerfactor))"; // reformulated constraint to avoid depending on angles or divisions.
+    autoSetup = TRUE;
+  }
+
+  // MDP variable
+  Independent ind_trqDes {
+    varName = "trqDes";
+    description = "Varies design torque to match calculated torque at design condition.";
+  }
+
+  // MDP variable
+  Dependent dep_trqDesSet {
+    eq_lhs = "trqDes";
+    eq_rhs = "trqDesSet";
+  }
+  
+  // MDP variable
+  Independent ind_Ndes {
+    varName = "Ndes";
+    description = "Varies design speed to match calculated speed at design condition.";
+  }
+
+  // MDP variable
+  Dependent dep_NdesSet {
+    eq_lhs = "Ndes";
+    eq_rhs = "NdesSet";
+  }
+
+  //-------------------------------------------
+  // ****** VARIABLE CHANGED METHODOLOGY ******
+  //-------------------------------------------
+
+  void variableChanged(string name, any oldVal) {
+    if (name == "switchThermPort") { 
+      if (switchThermPort == "TRUE") {
+        create("", "ThermalInputPort", "Q_I" );
+      }
+    }
+
+    if (name == "multiDes") {
+      if (switchDes == DESIGN) {
+        ind_trqDes.autoSetup = TRUE;
+        dep_trqDesSet.autoSetup = TRUE;
+        ind_Ndes.autoSetup = TRUE;
+        dep_NdesSet.autoSetup = TRUE;
+      }
+    }
+  }
+
+  //-----------------------------------------------
+  // ****** PERFORM ENGINEERING CALCULATIONS ******
+  //-----------------------------------------------
+  
+  void calculate() {
+    Speed = Sh_O.Nmech;
+    Pin = EP_I.S.r;
+    Current = EP_I.I.mag;
+    
+    if (switchDes == "DESIGN") {
+      eff = effDes;
+      Pout = Pin * eff**sign(Pin); // compute power to the load 
+      Mass = Pout / SpecificPower; // compute mass based on assumed specific power 
+
+      // get design values 
+      if (multiDes == "TRUE") {
+        NdesSet = Sh_O.Nmech;
+        trqDesSet = Pout * (C_HP_PER_RPMtoFT_LBF * (1. / 0.74569987) / NdesSet);
+        trqTemp = trqDesSet;
+        trq = trqDesSet;
+      } else {
+        Ndes = Sh_O.Nmech;
+        trqDes = Pout * (C_HP_PER_RPMtoFT_LBF * (1. / 0.745699872) / Ndes);
+        trqTemp = trqDes;
+        trq = trqDes;
+      }
+
+      // compute losses
+      Loss_r = Pin - Pout;
+      Loss_j = EP_I.S.j;
+    
+      // determine resistance 
+      motorResistance =  Loss_r / 3 / Current**2;
+    }
+
+    // set efficiency value
+    if(!S_map.isEmpty()) {
+      S_map.execute();
+    } else {
+      effBase = effDes;
+    }
+
+    eff = effBase;
+
+    if (switchDes == "OFFDESIGN") {	
+      // power to the load 
+      Pout = Pin * eff**sign(Pin);
+      
+      // calculate loss
+      Loss_r = Pin - Pout;
+      Loss_j = EP_I.S.j;
+    }
+    
+    // motor and Propulsor shaft connection
+    trq = ( C_HP_PER_RPMtoFT_LBF * (Pout/ 0.745699872) / Speed );	
+    Sh_O.trq = trq;
+  
+    real KW_PER_BTU_PER_SEC = 1.05505585;
+    Q_heat = sqrt(Loss_r**2 + Loss_j**2);
+    Q_heat /= KW_PER_BTU_PER_SEC;
+
+    if (switchThermPort == "TRUE") {
+      // run the thermal mass model
+      if (!S_eThermMass.isEmpty()) {
+        S_eThermMass.execute();
+      }
+    }
+  }
+
+  // end calculation section
+  void prePass() {
+    EP_I.frequency = frequency;
+    EP_I.setIVRMS(EP_I.I.r, EP_I.I.j, Vreal, Vimag);
+  }
+}
+#endif

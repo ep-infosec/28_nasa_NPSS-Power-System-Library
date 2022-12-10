@@ -1,0 +1,132 @@
+#ifndef __INVERTER_RECTIFIER_MAP__
+#define __INVERTER_RECTIFIER_MAP__
+
+#include <InterpIncludes.ncp>
+
+extern real pwrOut;
+extern real pwrDes;
+extern real effDes;
+extern real effBase;
+
+class InverterRectifierMap extends Subelement {
+
+  //----------------------------
+  // ****** DOCUMENTATION ******
+  //----------------------------
+
+  // title = "";
+
+  description = "The " + isA() + " handles the determination of efficiency for " +
+  "a power electronic device. It performs calls to a map that determines the " +
+  "efficiency as a function of per-unit (normalized) operating power.";
+
+  // usageNotes = isA() + "- NOTE TO USERS: This file....";
+  // background = "";
+
+  //------------------------------
+  // ****** SETUP VARIABLES ******
+  //------------------------------
+
+  real effMap {
+    value = 1.;  IOstatus = OUTPUT; units = "none";
+    description = "Efficiency of motor or generator from unscaled map TB_eff.";
+  }
+
+  real effMapDes {
+    value = 1;  IOstatus = OUTPUT;  units = "none";
+    description = "Efficiency of motor or generator at design point. " +
+    "Returned from unscaled map TB_eff at trqMapDes and NmapDes.";
+  }
+
+  real pwrMap {
+    value = 1.;  IOstatus = OUTPUT;  units = "kW"; // [kilowatt]
+    description = "Power scaled to map. " +
+    "Equal to pwrMapDes during design, and calculated as pwrOut / s_pwrDes during off-design.";
+  }
+
+  real pwrMapDes {
+    value = 1.;  IOstatus = OUTPUT;  units = "kW"; // [kilowatt]
+    description = "Power scaled to map at design point.  Set by map itself.";
+  }
+
+  real s_effDes {
+    value = 1.;  IOstatus = OUTPUT;  units = "none";
+    description = "Efficiency map scalar. " +
+    "Relates actual design efficiency to scaled design efficiency (effDes / effMapDes).";
+  }
+
+  real s_pwrDes {
+    value = 1.;  IOstatus = OUTPUT;  units = "none";
+    description = "Power map scalar.  Relates actual design power to scaled design (pwrDes / pwrMapDes).";
+  }
+
+  //------------------------------------------------------------
+  //   ******* OPTION VARIABLE SETUP *******
+  //------------------------------------------------------------
+
+  Option switchDes {
+    allowedValues = { DESIGN, OFFDESIGN }
+    description = "Determines if the subelement is in design or off-design mode.";
+    rewritableValues = FALSE; 
+  } 
+
+  //------------------------------------------------------------
+  // ****** SETUP PORTS, FLOW STATIONS, SOCKETS, TABLES ********
+  //------------------------------------------------------------
+
+  /* SOCKETS */
+
+  addInterface("INVERTER_RECTIFIER_MAP"); // compatible with the Motor and Generator elements' S_map socketType
+
+  Socket TB_eff {
+    description = "Efficiency vs. power. " +
+    "A function or table with the name TB_eff must be declared at the subelement scope in order to fill this socket. " +
+    "The format is TB_eff(real pwrMap), and returns effMap.";
+    socketType = "Function";
+    required = TRUE;
+    argTypes = { "real" }
+    returnType = "real";
+  } 
+
+  //-------------------------------------------
+  // ****** VARIABLE CHANGED METHODOLOGY ******
+  //-------------------------------------------
+
+  void variableChanged(string name, any oldVal) {
+    if(name == "switchDes") {
+      if(switchDes == DESIGN){
+        pwrMapDes.IOstatus = INPUT;
+        s_effDes.IOstatus = OUTPUT;
+        s_pwrDes.IOstatus = OUTPUT;
+      } else if(switchDes == OFFDESIGN){
+        pwrMapDes.IOstatus = OUTPUT;
+        s_effDes.IOstatus = INPUT;
+        s_pwrDes.IOstatus = INPUT;
+      }
+    }
+  }
+
+  //-----------------------------------------------
+  // ****** PERFORM ENGINEERING CALCULATIONS ******
+  //-----------------------------------------------
+
+  void calculate(){
+    if(switchDes == DESIGN){
+      // set map values at design point
+      pwrMap = pwrMapDes;
+      effMap = TB_eff(pwrMap);
+      effMapDes = effMap;
+
+      // calculate map scalars
+      s_effDes = effDes / effMapDes; // effDes is from parent element, effMapDes was found on map
+      s_pwrDes = abs(pwrDes) / pwrMapDes; // pwrDes is from parent element, pwrMapDes is from map input value            
+    }
+
+    // calculate map values
+    pwrMap = abs(pwrOut) / s_pwrDes;
+    effMap = TB_eff(pwrMap);
+
+    effBase = effMap * s_effDes; // set efficiency to send to parent element
+  }
+}
+#endif

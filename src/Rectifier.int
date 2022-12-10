@@ -1,0 +1,309 @@
+/***
+ -------------------------------------------------------------------------------
+ |                                                                             |
+ | NASA Glenn Research Center                                                  |
+ | 21000 Brookpark Rd 		                                                     |
+ | Cleveland, OH 44135 	                                                       |
+ |                                                                             |
+ | File Name:     Rectifier.int										                             |
+ | Author(s):     Jeffrey Csank, David Sadey, Tom Lavelle                      |
+ | Date(s):       March 2019                                                   |
+ |                                                                             |
+ -------------------------------------------------------------------------------
+***/
+
+#ifndef __RECTIFIER__
+#define __RECTIFIER__
+
+#include "PSL_math.fnc"
+
+class Rectifier extends ElectricElement {
+  
+  //----------------------------
+  // ****** DOCUMENTATION ******
+  //----------------------------
+  
+  // title = "";
+  
+  description = "The " + isA() + " represents the performance of a generic AC-to-DC converter. " +
+  "This component is intended to run with an InverterRectifierMap subelement plugged into its " +
+  "S_map socket that represents its losses.";
+
+  usageNotes = isA() +
+  "
+
+- The input design parameters that must be specified by the modeler when creating an instance 
+of this " + isA() + " component are mass specific power (SpecificPower) and design efficiency 
+(eff). This component will transfer power from input to output, with losses according to its 
+design efficiency. ONDESIGN, it calculates its mass (Mass) by dividing its ONDESIGN input power 
+by its specific power.
+
+- This component transforms power, from AC power at its input port, to DC output power. 
+Because this component represents a transformation of power, it includes a node. Being a 
+component including a node, its voltage is an indepedent variable. It also features a 
+dependent that ensures that the electrical power at the input port, is sufficient to produce 
+the output power demanded, plus the losses in this component (EP_I.S.r * eff == Pdemand).
+
+- Also being a transformation component that involves AC power, this component features 
+multiple independents and dependents. The independents, ind_Vreal and ind_Vimag give the 
+solver the ability to vary the input voltage, such that the input/output power relationship, 
+dep_Power is met (Pout_real == Pin_real * eff), a well as the input phase relationship, 
+dep_phase is met (Vin_phase == Iin_phase, which means the input power factor == unity)
+
+- Note that, as a component that contains a node and has its voltage known at the beginning
+of the solverSequence, it uses its prePass() method to call the electrical port update 
+function to pass this voltage information to electrical components that it is connected to. 
+Note that in the current implementation of the NPSS Power System Library, these components 
+containing nodes do not know what currents are going through their ports at the beginning of 
+an iteration. Because of this, they must be connected to power transmission components (cables 
+and breakers), and these transmission components must be run before node-bearing 
+transformation components like this one, as the transmission components will calculate and 
+populate these current values. Note that this design is intended to be analogous to a common 
+approach taken in fluid networks within NPSS rocket models.
+
+- This component, like other power system components in the NPSS Power System Library, can 
+optionally include thermal models. An optional thermal model is enabled by setting 
+switchThermPort to TRUE, and plugging an EThermalMass subelement into the S_eThermMass socket. 
+Doing these will add a temperature state (existing within EThermalMass) and a thermal port to 
+the model. The thermal port is intended to connect this component to a second component that 
+represents the mechanism by which heat is extracted from this component. This second component 
+could represent a heat exchanger, cold plate, or just model heat transfer from the first 
+component to the surrounding environment. For more information, see EThermalMass.";
+  
+  //------------------------------
+  // ****** SETUP VARIABLES ******
+  //------------------------------
+  
+  ComplexNumber Sdc;
+  ComplexNumber Idc;
+  ComplexNumber Iac;
+  ComplexNumber Vdc;
+    
+  eff {
+    value = 1.0; IOstatus = "input"; units = "none";
+    description = "Efficiency of the rectifier.";
+  }
+
+  real effBase {
+    value = 1.;  IOstatus = "output";  units = "none";
+    description = "Adiabatic efficiency.  Calculated and set by S_map socket during off design.";
+  }
+
+  real effDes {
+    value = 1.;  IOstatus = "input";  units = "none";
+    description = "Adiabatic efficiency at design point.";
+  }
+  
+  real frequency {
+    value = 60.; IOstatus = "input"; units = "Hz"; // [hertz]
+    description = "Frequency of AC output power.";
+  }
+
+  real pwrDes {
+    value = 1.;  IOstatus = "input";  units = "kW"; // [kilowatt]
+    description = "Output power at design.";
+  }
+
+  real pwrOut {
+    value = 1.;  IOstatus = "output";  units = "kW"; // [kilowatt]
+    description = "Output power.";
+  }
+
+  real Vimag {
+    value = 0; IOstatus = "input"; units = "V"; // [voltage]
+    description = "Rectifier voltage (imaginary).";
+  }
+  
+  real Vreal {
+    value = 1000.; IOstatus="input"; units = "V"; // [voltage]
+    description = "Rectifier voltage (real).";
+  }
+  
+  real K {
+    value = 1; IOstatus = "input"; units = "none";
+    description = "Voltage ratio (V_out = V_outMax * K).
+                   Represents the combined effect of any internal transformer as well as the modulation index/duty cycle";
+  }
+
+  real SpecificPower {
+    value = 13; IOstatus = "input"; units = "none"; // [kW/kg]
+    description = "Power to weight ratio for the component.";
+  }
+
+  Mass {
+    value = 1.; IOstatus = "output"; units = "kg"; // [kilograms]
+    description = "Component mass.";
+  }
+
+  Loss_r {
+    value = 0; IOstatus = "output"; units = "kW"; // [kilowatts]
+    description = "Generator loss.";
+  }
+
+  Loss_j {
+    value = 0; IOstatus = "output"; units = "kW"; // [kilowatts]
+    description = "Generator loss.";
+  }
+
+  Q_heat {
+    value = 0; IOstatus = "output"; units = "Btu/sec"; // [BTUs / sec]
+    description = "Power dissipation at current time.";
+  }
+
+  
+  //------------------------------------
+  // ****** OPTION VARIABLE SETUP ******
+  //------------------------------------
+
+  Option switchDes {
+    allowedValues = { "DESIGN", "OFFDESIGN" }
+    description = "Determines if the element is in design or off-design mode.";
+    rewritableValues = FALSE;
+  }
+
+  Option switchThermPort {
+    allowedValues = { "TRUE", "FALSE" }
+    description = "Determines if component needs thermal port.";
+    rewritableValues = FALSE;  // Enables converter optimization.
+    trigger = TRUE;
+  }
+
+  
+
+  //----------------------------------------------------------
+  // ****** SETUP PORTS, FLOW STATIONS, SOCKETS, TABLES ******
+  //----------------------------------------------------------  
+
+  /* ELECTRICAL PORTS */
+
+  ElectricInputPort EP_I {
+    description = "Electric input port.";
+    ElectricPowerType.allowedValues = { "AC3" };
+    setOption("ElectricPowerType", "AC3"); // only AC3 output allowed
+  }
+
+  ElectricOutputPort EP_O {
+    description = "Electric output port.";
+    ElectricPowerType.allowedValues = { "DC" };
+    setOption("ElectricPowerType", "DC"); // only DC output allowed
+  }
+
+  // SOCKETS
+
+  Socket S_map {
+    allowedValues = { "effBase" }
+    description = "Socket to calculate motor map performance.";
+    socketType = "INVERTER_RECTIFIER_MAP";
+  }
+
+  Socket S_eThermMass {
+    allowedValues = { "Q_heat", "Mass" }
+    description = "Thermal mass socket.";
+    socketType = "EThermalMass";
+  }
+  
+  //-----------------------------------------------------
+  // ******  ADD SOLVER INDEPENDENTS & DEPENDENTS  ******
+  //-----------------------------------------------------
+
+  Independent ind_Vreal { 
+    varName = "Vreal"; 
+    autoSetup = TRUE;
+    indepRef = "1000";
+    description = "Varies the real component of the inverter voltage";
+  }
+  
+  Independent ind_Vimag { 
+    varName = "Vimag"; 
+    autoSetup = TRUE;
+    indepRef = "1000";
+    description = "Varies the imaginary component of the inverter voltage";
+  }
+  
+  Independent ind_control { 
+    varName = "K"; 
+    autoSetup = FALSE;
+    indepRef = "1000";
+    description = "Varies the relationship between input and output voltage (voltage ratio)";
+  }
+  
+  Dependent dep_Power {
+    eq_rhs = "EP_I.S.rRMS * eff**sign(EP_I.S.r)";
+    eq_lhs = "EP_O.S.rRMS";
+    autoSetup = TRUE;
+  }
+  
+  Dependent dep_phase {
+    eq_lhs = "EP_I.S.j";
+    eq_rhs = "0";
+    autoSetup = TRUE;
+  }
+
+  //-------------------------------------------
+  // ****** VARIABLE CHANGED METHODOLOGY ******
+  //-------------------------------------------
+
+  void variableChanged(string name, any oldVal) {
+    if (name == "switchThermPort") { 
+      if (switchThermPort == "TRUE") {
+        create("", "ThermalInputPort", "Q_I");
+      }
+    }
+
+    if (name == "switchDes") {
+      if (switchDes == OFFDESIGN) {
+        effDes.IOstatus = "output";
+      }
+    }
+  }
+
+  //-----------------------------------------------
+  // ****** PERFORM ENGINEERING CALCULATIONS ******
+  //-----------------------------------------------
+
+  void calculate() {
+    pwrOut = EP_O.S.rRMS;
+
+    if (switchDes == "DESIGN" ) {
+      // handle case where guessed design power is zero.
+      if (abs(pwrOut) < 1e-4) { pwrOut = 1e-4; }
+      pwrDes = pwrOut;
+      
+      // compute mass based on assumed specific power
+      // Both mass and loses are based on output power (power sent)
+      Mass = pwrOut / SpecificPower;
+    }
+
+    // set efficiency value
+    if(!S_map.isEmpty()) {
+      S_map.execute();
+    } else {
+      effBase = effDes;
+    }
+    eff = effBase;
+    
+    Loss_r = EP_I.S.r - EP_O.S.r;
+    Loss_j = EP_I.S.j - EP_O.S.j;
+
+    real KW_PER_BTU_PER_SEC = 1.05505585;
+    Q_heat = sqrt(Loss_r**2 + Loss_j**2);
+    Q_heat /= KW_PER_BTU_PER_SEC;
+
+    if (switchThermPort=="TRUE") {
+      // run the thermal mass model.
+      if ( !S_eThermMass.isEmpty() ) {
+        S_eThermMass.execute();
+      }
+    }
+  }
+  
+  //------------------------------------------------------------
+  // ******* PREPASS FUNCTION *******
+  //------------------------------------------------------------
+  void prePass() {	
+    EP_I.frequency = frequency;
+    EP_I.setIVRMS(EP_I.I.r, EP_I.I.j, Vreal, Vimag);
+    EP_O.setIVRMS(EP_O.I.r, EP_O.I.j, EP_I.V.mag * 3 * sqrt(2) / PI * K, 0);
+  }
+}
+#endif

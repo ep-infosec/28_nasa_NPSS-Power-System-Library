@@ -1,0 +1,195 @@
+/***
+ -------------------------------------------------------------------------------
+ |                                                                             |
+ | NASA Glenn Research Center                                                  |
+ | 21000 Brookpark Rd 		                                                     |
+ | Cleveland, OH 44135 	                                                       |
+ |                                                                             |
+ | File Name:     Enode.int                                                    |
+ | Author(s):     George Thomas, Jeffrey Csank, David Sadey, Tom Lavelle       |
+ | Date(s):       February 2020                                                |
+ |                                                                             |
+ -------------------------------------------------------------------------------
+***/
+
+#ifndef __ENODE__
+#define __ENODE__
+
+#include <InterpIncludes.ncp>
+
+class Enode extends ElectricElement {
+  
+  //----------------------------
+  // ****** DOCUMENTATION ******
+  //----------------------------
+
+  // title = "";
+
+  description = "The " + isA() + " is an abstract component representing a bus or electrical 
+  node that has an arbitrary number of electrical connections to it. It includes independents 
+  for the node voltage to be selected such that Kirchoff's current law (sum of all currents 
+  into node = 0) is satisfied using dependents that state Kirchoff's law. 
+  Supports DC, single-phase, and 3-phase AC.";
+
+  usageNotes = isA() +
+  "
+
+- Note that, as a component that contains (is) a node and has its voltage known at the
+beginning of the solverSequence, it uses its prePass() method to call the electrical port
+update function to pass this voltage information to electrical components that it is connected 
+to. Note that in the current implementation of the NPSS Power System Library, these components 
+containing nodes do not know what currents are going through their ports at the beginning of 
+an iteration. Because of this, they must be connected to power transmission components (cables 
+and breakers), and these transmission components must be run before node-bearing 
+transformation components like this one, as the transmission components will calculate and 
+populate these current values. Note that this design is intended to be analogous to a common 
+approach taken in fluid networks within NPSS rocket models.";
+
+  // background = "";
+
+  //------------------------------
+  // ****** SETUP VARIABLES ******
+  //------------------------------
+
+  ComplexNumber Inet;
+  real frequency;
+  real Vmag;
+  real Vangle;
+  real VrealRMS;
+  real VimagRMS{
+    value = 0;  IOstatus = "output";  units = "none"; // [volts]
+    description = "Imaginary portion of voltage.";
+  };
+  real IrealIn;
+  real IrealOut;
+  real IimagIn;
+  real IimagOut;
+
+  //----------------------------------------------------------
+  // ****** SETUP PORTS, FLOW STATIONS, SOCKETS, TABLES ******
+  //----------------------------------------------------------  
+  
+  /* ELECTRICAL PORTS */
+  
+  string ElectricPorts[];
+  ElectricPorts {
+    description = "Array of electric ports.";
+    ptrType = "ElectricPort";
+  }
+  
+  //-----------------------------------------------------
+  // ******  ADD SOLVER INDEPENDENTS & DEPENDENTS  ******
+  //-----------------------------------------------------
+
+  Independent ind_Vreal { 
+    varName = "VrealRMS"; 
+    autoSetup = TRUE;
+    indepRef = "1200";
+    description = "Varies the volume total pressure.";
+  }
+  
+  Independent ind_Vimag { 
+    varName = "VimagRMS"; 
+    autoSetup = TRUE;
+    indepRef = "1200";
+    description = "Varies the volume total specific enthalpy.";
+  }
+  
+  Dependent dep_Ireal {
+    eq_lhs = "Inet.rRMS";
+    eq_rhs = "0.";
+    autoSetup = TRUE;
+  }
+  
+  Dependent dep_Iimag {
+    eq_lhs = "Inet.jRMS";
+    eq_rhs = "0.";
+    autoSetup = TRUE;
+  }
+
+  //------------------------------------
+  // ****** OPTION VARIABLE SETUP ******
+  //------------------------------------
+  
+  Option ElectricPowerType {
+    allowedValues = { "AC1", "DC", "AC3" };
+    description = "Electric Power Type (DC, AC1, AC3)";
+    trigger = TRUE;
+    rewritableValues = FALSE;
+  }
+
+  //-------------------------------------------
+  // ****** VARIABLE CHANGED METHODOLOGY ******
+  //-------------------------------------------
+
+  void variableChanged(string name, any oldVal) {
+    // change solver setup depending on power type
+    if (name =="ElectricPowerType") {
+      if (ElectricPowerType == "DC") {
+        ind_Vreal.autoSetup = TRUE;
+        ind_Vimag.autoSetup = FALSE;
+        dep_Ireal.autoSetup = TRUE;
+        dep_Iimag.autoSetup = FALSE;
+      } else if (ElectricPowerType == "AC1") {
+        ind_Vreal.autoSetup = TRUE;
+        ind_Vimag.autoSetup = TRUE;
+        dep_Ireal.autoSetup = TRUE;
+        dep_Iimag.autoSetup = TRUE;
+      } else if (ElectricPowerType == "AC3") {
+        ind_Vreal.autoSetup = TRUE;
+        ind_Vimag.autoSetup = TRUE;
+        dep_Ireal.autoSetup = TRUE;
+        dep_Iimag.autoSetup = TRUE;
+      } 
+    } 
+  } 
+
+  //-----------------------------------------------
+  // ****** PERFORM ENGINEERING CALCULATIONS ******
+  //-----------------------------------------------
+
+  void calculate() {
+        
+    // sum up the current components at node
+    // solver will drive to zero
+    Inet.setrj( 0., 0. );
+
+    int i;
+    string Iname;
+    for (i = 0; i < ElectricPorts.entries(); i++) {
+      if (ElectricPorts[i]->hasInterface("ElectricInputPort")) {
+        Iname = ElectricPorts[i] + ".I"; 
+        Inet.plus(Iname);			    
+      }
+
+      if (ElectricPorts[i]->hasInterface("ElectricOutputPort")) {
+        Iname = ElectricPorts[i] + ".I";
+        Inet.minus(Iname);
+      }
+    }
+  }
+  
+  //-------------------------------
+  // ****** PREPASS FUNCTION ******
+  //-------------------------------
+
+  void prePass() {
+    int i; // push the voltage from the solver out to the ports
+    for (i = 0; i < ElectricPorts.entries(); i++) {
+      ElectricPorts[i]->frequency = frequency;	
+      ElectricPorts[i]->setIVRMS(0., 0., VrealRMS, VimagRMS);
+    }
+  }
+  
+  // ----------------------------------
+  //  ****** POSTCREATE FUNCTION ******
+  // ----------------------------------
+
+  void postcreate(string name) {
+    // allow for the creation of ports at run time
+    if (name->hasInterface("ElectricPort")) {
+      ElectricPorts.append(name);
+    }
+  }
+}
+#endif

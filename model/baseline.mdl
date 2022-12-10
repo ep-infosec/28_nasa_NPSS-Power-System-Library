@@ -1,0 +1,144 @@
+/***
+ -------------------------------------------------------------------------------
+ |                                                                             |
+ | NASA Glenn Research Center                                                  |
+ | 21000 Brookpark Rd 		                                                     |
+ | Cleveland, OH 44135 	                                                       |
+ |                                                                             |
+ | File Name:     baseline.mdl                                                 |
+ | Author(s):	    Jeffrey Csank, David Sadey, Tom Lavelle       			         |
+ | Date(s):       April 2018                                                   |
+ |                                                                             |
+ | Description:   Baseline model (generator, cable, motor) using electric port.|
+ |                                                                             |
+ -------------------------------------------------------------------------------
+***/
+
+cout<<"======================================="<<endl;
+cout<<" Example Model with Real and Reactive Power "<<endl;
+cout<<"======================================="<<endl;
+
+#ifdef THERMO
+    cout << "THERMO" << endl;
+    setThermoPackage("$THERMO");
+#elseif
+    cout << "GasTbl" << endl;
+    setThermoPackage("GasTbl");
+#endif
+
+/**************************
+Electric Power System Components
+**************************/
+Element Generator Gen1 {
+	#include <STARCABLmotorGenerator.map>
+	Vbus_LL=1200;	
+	effDes=0.96;
+	SpecificPower=13.;
+	frequency=400; // Hz
+}
+
+Element AeroCable Cable1 {
+	length=28.3464;
+}
+
+Element Motor EM1 {
+	 #include <STARCABLmotorGenerator.map>
+	 effDes=0.96;
+	 powerfactor=0.98;
+	 SpecificPower=13.0; 
+	 trq=55144.0; 
+	 frequency = 400.;
+	 Vreal = 1000.;
+}
+
+
+/**************************
+ Electric Motor Connections
+**************************/
+Element FlowStart Atm{
+	Pt=14.696;
+	Tt=518.67;
+	W=4394.74/20;
+}
+
+Element Compressor Prop{
+	#include "fanE3.map";
+	PRdes=1.4;
+	effDes=0.93;	
+}
+
+Element FlowEnd dump{
+};
+
+
+Element Shaft Propulsor_Shaft {
+	Nmech=4000;   // rpm
+	ShaftInputPort Sh1_I, Sh_Prop;
+}
+
+/**************************
+ Turbine Engine / Generator  Connections
+**************************/
+Element FlowStart TurbineAtm{
+	Pt=500;
+	Tt=2200;
+	W=500;
+	FAR = .02;
+}
+
+Element Turbine Turb{
+	#include "lptE3.map";	
+	PRbase=2;
+	effDes=0.9;
+
+}
+
+Nozzle Noz{
+  PsExh = 14.;
+}
+
+Element FlowEnd Turbinedump{
+};
+
+
+Independent turbPR{
+	varName="Turb.PRdes";
+}
+
+Element Shaft Turbine_Shaft {
+	Nmech=4000;   // rpm
+	ShaftInputPort Sh1_I, Sh_Turbine;	
+}
+
+//-------------------------------------------------------------------------------------------------
+// Component Linkages
+//-------------------------------------------------------------------------------------------------
+linkPorts( "Propulsor_Shaft.Sh1_I"  , "EM1.Sh_O"          	, "Shaft_Motor1" );
+linkPortI( "Gen1.EP_O", "Cable1.EP_I" );
+linkPortI( "Cable1.EP_O", "EM1.EP_I" );
+findSourcesAndPropagate();
+
+linkPorts( "Atm.Fl_O"               , "Prop.Fl_I"           , "St0-St1");
+linkPorts( "Prop.Fl_O"              , "Noz.Fl_I"           ,  "St1-St2");
+linkPorts( "Noz.Fl_O"              ,  "dump.Fl_I"           , "St2-End");
+
+//
+linkPorts( "Prop.Sh_O"              , "Propulsor_Shaft.Sh_Prop" , "Prop-to-Shaft");
+linkPorts( "TurbineAtm.Fl_O"        , "Turb.Fl_I"           , "St00-St10");
+linkPorts( "Turb.Fl_O"              , "Turbinedump.Fl_I"    , "St10-End0");
+linkPorts( "Turb.Sh_O"        		, "Turbine_Shaft.Sh_Turbine" , "Turb-to-Shaft");
+linkPorts( "Turbine_Shaft.Sh1_I"    , "Gen1.Sh_O", "Gen1-to-Shaft");
+
+
+solverSequence.remove( "Gen1" );
+solverSequence.remove( "EM1" );
+solverSequence.remove( "Turbine_Shaft" );
+solverSequence.remove( "Propulsor_Shaft" );
+
+solverSequence.append( "Gen1" );
+solverSequence.append( "EM1" );
+solverSequence.append( "Turbine_Shaft" );
+solverSequence.append( "Propulsor_Shaft" );
+
+//solver.debugLevel = "ITERATION_DETAILS";
+//solver.diagnosticFile = "soler.bad";

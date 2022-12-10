@@ -1,0 +1,218 @@
+/***
+ -------------------------------------------------------------------------------
+ |                                                                             |
+ | NASA Glenn Research Center                                                  |
+ | 21000 Brookpark Rd                                                          |
+ | Cleveland, OH 44135                                                         |
+ |                                                                             |
+ | File Name:     npssel.view                                                  |
+ | Author(s):     George Thomas, Jeffrey Csank, David Sadey, Tom Lavelle       |
+ | Date(s):       November 2020                                                |
+ |                                                                             |
+ -------------------------------------------------------------------------------
+***/
+
+OutFileStream pageStream { filename = "output/powertrain.viewOut"; }
+
+// A couple of functions to do rounding
+// Round to a specified number of digits (after the decimal point)
+real roundTo(real x, real digits)
+{
+   return round(x*10**digits)*10**-digits;
+}
+// Rounds to specfied digits, and if the angle is just about at -180, then make it 180 (less confusing)
+real roundDeg(real x, real digits)
+{
+   if (x < -179.999) { x += 360; } // -179.999 is closest NPSS "real" above -180
+   return roundTo(x,digits);
+}
+
+// This function is called at the beginning of each run of page.display(), in order
+// to set up things relevant to NPSS Power System Library components
+void setupElectricalPageViewer() {
+
+   // If we use the default component print order (based on order the propagate power
+   // code crawls over the circuit) then we don't have to do much.
+   // if (page.componentOrder == "SOURCE_TO_LOAD") {
+   page.outputPortList = {};
+   int idxComp;
+   for (idxComp = 0; idxComp < powerComponentListSourceToLoad.entries(); idxComp++) {
+      
+      string compName = powerComponentListSourceToLoad[idxComp];
+      string compPorts[] = compName->list("ElectricOutputPort", TRUE);
+      
+      if (compPorts.entries() > 0) {
+         page.outputPortList.append(compPorts);
+      }
+   }
+
+   // Set up the page viewer filename as well, as the model name may have been set at this point.
+   // Every time we change the filename, it wipes out the existing file contents, so only do it
+   // if we're in DESIGN mode.
+   if (page.switchDes == "DESIGN") {
+      pageStream.filename = "output/"+MODELNAME+".viewOut";
+   }
+}
+
+DataViewer PageViewer page { 
+
+   // Give this page viewer a switchDes, we will use it for the setup function
+   Option switchDes {
+      allowedValues = { "DESIGN", "OFFDESIGN" };
+      description = "Design/Off-Design switch";
+      rewritableValues = FALSE;
+      trigger = FALSE;
+      value = "DESIGN";
+   }
+
+   // Create some objects that our special power system viewer will use
+   string outputPortList[];
+
+   // Override the base class's display function, and do some stuff first to prepare the electric viewer
+   void display() {
+      setupElectricalPageViewer();
+      elecPorts.elecPortPowerData.componentList = outputPortList;
+      elecPorts.elecPortVIData.componentList = outputPortList;
+      elecComponents.elecComponentData.componentList = powerComponentListSourceToLoad;
+      PageViewer::display();
+   }
+
+   GroupBlock TnBGroup {
+
+      SimpleBlock title { 
+   body = "*******************************************************************************\n" +
+         "NCP ????????????????????????????    model:?????????????????   run by:?????????????   solutionMode=?????????????     converge=?????    CASE:?????\n" +
+         "time:???.????   timeStep:?.?????    therm_package:?????????   Mode:???????????????   itr/pas/Jac/Bry=????/????/???/???    run: ???????? ????????" ;
+   vars = {"VERSION","MODELNAME","USER","solver.solutionMode","solver.converged", "CASE",
+           "time","timeStep","THERMPACKAGE","page.switchDes","solver.iterationCounter","solver.passCounter","solver.numJacobians","solver.numBroydens","date","timeOfDay"}
+      } 
+
+   
+      anchor = "title"; 
+      addGutter = TRUE;
+   } // end TnBGroup
+
+   GroupBlock elecPorts { 
+
+      SimpleBlock title { 
+         body = "                                        ELECTRICAL PORT DATA"; 
+      } 
+      
+      DColTBlock elecPortPowerData { 
+         titleBody = "                                   Complex Power Data                   |               Misc Data"; 
+         compType = "ElectricPort";
+         // An experiment for later:
+         //compAttr = {"strFmt(\"%-50s\",refport->refport+\" - \"+refport):??????????????????????????????????????????????????=Ports", "roundTo(S.mag,2):????.??=|S|, kVA","roundDeg(S.phaseDeg,3):????.???=/_S, deg","roundTo(S.r,2):????.??=P, kW","roundTo(S.j,2):????.??=Q, kVAR","ElectricPowerType:?????????????=Power Type","PF:??.????=Power Factor","frequency:???????.???=frequency, Hz"}; 
+         //compTypeFormat = "?"; 
+         compAttr = {"roundTo(S.mag,2):????.??=|S|, kVA","roundDeg(S.phaseDeg,3):????.???=/_S, deg","roundTo(S.r,2):????.??=P, kW","roundTo(S.j,2):????.??=Q, kVAR","roundTo(S.r/0.746,2):????.??=P, hp","ElectricPowerType:?????????????=Power Type","PF:??.????=Power Factor","frequency:???????.???=frequency, Hz"}; 
+         defSNFormat = "?.?e???";
+      }
+      DColTBlock elecPortVIData { 
+         titleBody = "\n                                   Complex Voltage Data  (V_LL)   |     Complex Current Data  (I_Line)"; 
+         compType = "ElectricPort";
+         compAttr = {"roundTo(V.mag,2):???????.??=|V|, V","roundDeg(V.phaseDeg,3):????.???=/_V, deg","roundTo(V.r,2):????.??=V.r","roundTo(V.j,2):????.??=V.j","roundTo(I.mag,2):???????.??=|I|, A","roundDeg(I.phaseDeg,3):????.???=/_I, deg","roundTo(I.r,2):????.??=I.r","roundTo(I.j,2):????.??=I.j"}; 
+         defSNFormat = "?.?e???";
+      }
+
+      anchor = "title";
+      title.bottom = "elecPortPowerData";
+      elecPortPowerData.bottom = "elecPortVIData";
+      addGutter = FALSE; 
+   }
+
+   GroupBlock elecComponents { 
+      SimpleBlock title { 
+         body = "                                        ELECTRICAL POWER SYSTEM COMPONENT DATA"; 
+      } 
+
+      DColTBlock elecComponentData { 
+         titleBody = "";
+         compType = "ElectricElement"; 
+         compAttr = {"eff:?.?????","Mass:????.??=Mass, kg", "Loss_r:????.??=Loss_r, kW", "Loss_j:????.??=Loss_j, kVAR", "Q_heat:????.??=Q_heat, BTU/s"}; 
+         defSNFormat = "?.?e???";
+      }
+
+      GroupBlock elecComponentDataGroup {
+         SimpleBlock title { 
+            body = "\n                            ELECTRICAL POWER SYSTEM -- COMPONENT SPECIFIC DATA"; 
+         }
+         DColTBlock motorData { 
+            //titleBody = "Motor Data";
+            compType = "Motor"; 
+            compAttr = {"Pout","S_map.Nmap","S_map.trqMap","S_map.effMap","S_map.NmapDes","S_map.trqMapDes","S_map.effMapDes"}
+            defSNFormat = "???.????";
+         }
+         DColTBlock generatorData { 
+            //titleBody = "Generator Data";
+            compType = "Generator"; 
+            compAttr = {"Pin","S_map.Nmap","S_map.trqMap","S_map.effMap","S_map.NmapDes","S_map.trqMapDes","S_map.effMapDes"}
+            defSNFormat = "???.????";
+         }
+         DColTBlock DCDCData {
+            //titleBody = "DC_DC_Converter Data";
+            compType = "DC_DC_Converter"; 
+            compAttr = {"pwrOut","S_map.pwrMap","S_map.effMap","S_map.pwrMapDes","S_map.effMapDes"}
+            defSNFormat = "???.????";
+         }
+         DColTBlock inverterData { 
+            //titleBody = "Inverter Data";
+            compType = "Inverter"; 
+            compAttr = {"pwrOut","S_map.pwrMap","S_map.effMap","S_map.pwrMapDes","S_map.effMapDes"}
+            defSNFormat = "???.????";
+         }
+         DColTBlock rectifierData { 
+            //titleBody = "Rectifier Data";
+            compType = "Rectifier"; 
+            compAttr = {"pwrOut","S_map.pwrMap","S_map.effMap","S_map.pwrMapDes","S_map.effMapDes"}
+            defSNFormat = "???.????";
+         }
+         
+         
+         DColTBlock aeroCableData { 
+            //titleBody = "AeroCable Data";
+            compType = "AeroCable"; 
+            compAttr = {"R=R, Ohms","L=L, Henries", "Z.j=X, Reactance", "cable_size", "paralleled=#parallel", "ampacity"}
+         }
+         DColTBlock cableData { 
+            //titleBody = "Cable Data";
+            compType = "Cable"; 
+            compAttr = {"R=R, Ohms","L=L, Henries", "Z.r=Z.r, Ohms", "Z.j=Z.j, Ohms (reactive)"}
+         }
+         DColTBlock breakerData { 
+            //titleBody = "Breaker Data";
+            compType = "Breaker"; 
+            compAttr = {"R=R, Ohms","L=L, Henries", "Z.r=Z.r, Ohms", "Z.j=Z.j, Ohms (reactive)"}
+         }
+         anchor = "title"; 
+         title.bottom = "motorData";
+         motorData.bottom = "generatorData";
+         generatorData.bottom = "inverterData";
+         inverterData.bottom = "rectifierData";
+         rectifierData.bottom = "DCDCData";
+         DCDCData.bottom = "aeroCableData";
+         aeroCableData.bottom = "cableData";
+         cableData.bottom = "breakerData";
+      }
+      anchor = "title"; 
+      title.bottom = "elecComponentData"; 
+      elecComponentData.bottom = "elecComponentDataGroup";
+      addGutter = FALSE; 
+   }
+
+   LinkColTBlock thermalPorts { 
+      titleBody = "                                        THERMAL PORT DATA";
+      titleVars = { }
+      compType = "ThermalOutputPort";
+      compTypeFormat = "????????????????????????";
+      compAttr = { "MassTemp", "HeatTransferRate" }
+   } 
+
+   anchor = "TnBGroup"; 
+   TnBGroup.bottom = "elecPorts"; 
+   elecPorts.bottom = "elecComponents";
+   elecComponents.bottom = "thermalPorts";
+
+   pageWidth = 0; 
+   pageHeight = 0; 
+   outStreamHandle = "pageStream"; 
+}

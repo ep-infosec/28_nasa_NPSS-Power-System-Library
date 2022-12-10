@@ -1,0 +1,64 @@
+/***
+ -------------------------------------------------------------------------------
+ |                                                                             |
+ | NASA Glenn Research Center                                                  |
+ | 21000 Brookpark Rd 		                                                     |
+ | Cleveland, OH 44135 	                                                       |
+ |                                                                             |
+ | File Name:     ElectricElement.int                                          |
+ | Author(s):     Jonathan Fuzaro Alencar                                      |
+ | Date(s):       March 2020                                                   |
+ |                                                                             |
+ | Description:   Serves as an interface for all electric components in the    |
+ |                NPSS Power System Library.                                   |
+ |                                                                             |
+ -------------------------------------------------------------------------------
+***/
+
+#ifndef __ELECTRIC_ELEMENT__
+#define __ELECTRIC_ELEMENT__
+
+class ElectricElement extends Element {
+  //------------------------------
+  // ****** DOCUMENTATION ********
+  //------------------------------  
+
+  // title = "";
+  description = "The " + isA() + " extends the generic NPSS Element class to include 
+  some useful properties specific to NPSS Power System Library components.";
+  // usageNotes = isA() + "- NOTE TO USERS: This file....";
+  // background = "";
+
+  int containsNode = FALSE;
+
+  //------------------------------
+  // ****** SETUP VARIABLES ******
+  //------------------------------
+
+  real Mass {
+    value = 0.0; IOstatus = "output"; units = "kg"; // [kilograms]
+    description = "Computed on-design mass.";
+  }
+
+  real eff {
+    value = 1.0; IOstatus = "input"; units = "none";
+    description = "Performance efficiency.";
+  }
+
+  real Loss_r {
+    value = 0.0; IOstatus = "output"; units = "W";
+    description = "Active power loss.";
+  }
+
+  real Loss_j {
+    value = 0.0; IOstatus = "output"; units = "W";
+    description = "Reactive power loss.";
+  }
+  
+  real Q_heat {
+    value = 0; IOstatus = "output";  units = "Btu/sec"; // [BTUs / sec]
+    description = "Power dissipation in BTU/s at current time.";
+  }
+}
+
+#endif
